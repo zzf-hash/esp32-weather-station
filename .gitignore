@@ -1,0 +1,4 @@
+# 真实配置含 WiFi 密码,不入库(用 config.example.py 作模板)
+config.py
+__pycache__/
+*.pyc
