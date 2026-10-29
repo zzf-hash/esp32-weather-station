@@ -120,12 +120,20 @@ def fetch_weather():
         print('[weather] fail:', e)
 
 
-WMO = {0: 'Clear', 1: 'Mainly Clear', 2: 'Partly Cloudy', 3: 'Overcast',
-       45: 'Fog', 48: 'Rime Fog', 51: 'Drizzle', 53: 'Drizzle', 55: 'Drizzle',
-       61: 'Light Rain', 63: 'Rain', 65: 'Heavy Rain', 66: 'Freezing Rain',
-       71: 'Light Snow', 73: 'Snow', 75: 'Heavy Snow',
-       80: 'Showers', 81: 'Showers', 82: 'Heavy Showers',
-       95: 'Thunderstorm', 96: 'Thunderstorm', 99: 'Thunderstorm'}
+# WMO weather_code → (中文天况, 分组)。分组决定背景色带和图标,见 设计规范.md
+WMO_CN = {0: ('晴', 'clear'), 1: ('晴间多云', 'clear'), 2: ('多云', 'cloud'), 3: ('阴', 'cloud'),
+          45: ('雾', 'fog'), 48: ('雾凇', 'fog'),
+          51: ('毛毛雨', 'rain'), 53: ('毛毛雨', 'rain'), 55: ('毛毛雨', 'rain'),
+          56: ('冻毛毛雨', 'rain'), 57: ('冻毛毛雨', 'rain'),
+          61: ('小雨', 'rain'), 63: ('中雨', 'rain'), 65: ('大雨', 'rain'),
+          66: ('冻雨', 'rain'), 67: ('冻雨', 'rain'),
+          71: ('小雪', 'snow'), 73: ('中雪', 'snow'), 75: ('大雪', 'snow'), 77: ('小雪', 'snow'),
+          80: ('阵雨', 'rain'), 81: ('阵雨', 'rain'), 82: ('暴雨', 'rain'),
+          85: ('阵雪', 'snow'), 86: ('阵雪', 'snow'),
+          95: ('雷阵雨', 'storm'), 96: ('雷阵雨', 'storm'), 99: ('雷阵雨', 'storm')}
+
+def wx_info(code):
+    return WMO_CN.get(code, ('多云', 'cloud'))
 
 home = {'temp': None, 'humi': None}
 
@@ -137,46 +145,108 @@ def read_home():
     except Exception as e:
         print('[aht] fail:', e)
 
-# ---------- 页面绘制 ----------
+# ---------- 页面绘制(方向二:暖色渐变卡片)----------
 PAGES = 3
+WEEK_CN = ('星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日')
 
-def header(title, no):
-    f = tft.fb
-    f.fill(0)
-    f.fill_rect(0, 0, 240, 34, ui.BLUE)
-    ui.aa_text(f, title, 10, 3, 24, ui.WHITE)
-    s = '{}/{}'.format(no + 1, PAGES)
-    ui.aa_text(f, s, 230 - ui.aa_width(s, 24), 3, 24, ui.WHITE)
+def period(h):
+    """小时 → (时段文案, 背景色带键)。只由 NTP 本地时间推导,无额外数据源。"""
+    if h < 5:
+        return '凌晨', 'night'
+    if h < 8:
+        return '清晨', 'dawn'
+    if h < 12:
+        return '上午', 'day'
+    if h < 17:
+        return '下午', 'day'
+    if h < 20:
+        return '傍晚', 'dusk'
+    return '夜间', 'night'
+
+def is_night(h):
+    return h >= 19 or h < 6
+
+def comfort(rh):
+    """湿度评语(阈值推导):<35 干燥 / 35~65 舒适 / >65 潮湿。"""
+    if rh < 35:
+        return '干燥', ui.HOT
+    if rh > 65:
+        return '潮湿', ui.TEAL
+    return '舒适', ui.OK
+
+def deg_str(v):
+    return '{}°'.format(round(v))
 
 def draw_clock(no):
-    header('Clock', no)
-    t = local_time()
     f = tft.fb
-    ui.aa_center(f, '{:02d}:{:02d}'.format(t[3], t[4]), 72, 64, ui.WHITE)
-    ui.aa_center(f, '{}-{:02d}-{:02d}'.format(t[0], t[1], t[2]), 180, 24, ui.CYAN)
-    ui.aa_center(f, ('Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun')[t[6]], 222, 24, ui.GREY)
+    t = local_time()
+    name, sky = period(t[3])
+    ui.bands(f, sky)
+    ui.aa_center(f, '{:02d}:{:02d}'.format(t[3], t[4]), 36, 64, ui.TXT_ON)
+    ui.aa_center(f, WEEK_CN[t[6]] + ' · ' + name, 112, 18, ui.TXT_SUB)
+    ui.rrect(f, 16, 186, 208, 98, 14, ui.CARD)
+    ui.aa_text(f, '{}月{}日'.format(t[1], t[2]), 32, 200, 24, ui.INK)
+    ui.aa_text(f, '{}年'.format(t[0]), 32, 232, 16, ui.SUB)
+    if weather['ok']:
+        txt, grp = wx_info(weather['code'])
+        ui.aa_text(f, txt, 32, 258, 16, ui.SUB)
+        ui.weather_icon(f, grp, is_night(t[3]), 160, 238, ui.CARD, small=True)
+        ui.aa_right(f, deg_str(weather['temp']), 208, 252, 24, ui.INK)
+    else:
+        ui.aa_text(f, '暂无天气数据', 32, 258, 16, ui.SUB)
+    ui.page_dots(f, no, PAGES, ui.SKY[sky][2])
 
 def draw_weather(no):
-    header('Weather', no)
     f = tft.fb
+    h = local_time()[3]
     if not weather['ok']:
-        ui.aa_center(f, 'no data', 110, 24, ui.GREY)
+        ui.bands(f, 'cloud')
+        ui.aa_center(f, '暂无天气数据', 140, 18, ui.TXT_ON)
+        ui.page_dots(f, no, PAGES, ui.WHITE)
         return
-    ui.aa_center(f, '{}°'.format(round(weather['temp'])), 42, 64, ui.YELLOW)
-    ui.aa_center(f, WMO.get(weather['code'], 'Code ' + str(weather['code'])), 145, 24, ui.CYAN)
-    ui.aa_center(f, 'H {}°  L {}°'.format(round(weather['tmax']), round(weather['tmin'])), 190, 24, ui.WHITE)
-    ui.aa_center(f, 'RH {}%'.format(round(weather['humi'])), 232, 24, ui.GREY)
+    txt, grp = wx_info(weather['code'])
+    sky = period(h)[1] if grp == 'clear' else grp
+    ui.bands(f, sky)
+    ui.aa_text(f, config.CITY_NAME, 20, 16, 18, ui.TXT_ON)
+    ui.aa_right(f, txt, 220, 16, 18, ui.TXT_ON)
+    t = str(round(weather['temp']))
+    x = ui.aa_text(f, t, 18, 58, 96, ui.TXT_ON)
+    ui.deg(f, x + 6, 66, 6, ui.TXT_ON, f.pixel(x + 6, 66))
+    ui.weather_icon(f, grp, is_night(h), 146, 150, f.pixel(190, 120))
+    for i, (k, v, c) in enumerate((('最高', deg_str(weather['tmax']), ui.HOT),
+                                   ('最低', deg_str(weather['tmin']), ui.TEAL),
+                                   ('湿度', '{}%'.format(round(weather['humi'])), ui.INK))):
+        x0 = 16 + i * 72
+        ui.rrect(f, x0, 196, 64, 92, 12, ui.CARD)
+        ui.aa_center(f, k, 210, 16, ui.SUB, cx=x0 + 32)
+        ui.aa_center(f, v, 244, 24, c, cx=x0 + 32)
+    ui.page_dots(f, no, PAGES, ui.WHITE)
 
 def draw_home(no):
-    header('Home', no)
     f = tft.fb
+    ui.bands(f, 'home')
+    ui.aa_text(f, '室内', 20, 16, 18, ui.INK)
     if home['temp'] is None:
-        ui.aa_center(f, 'no sensor', 110, 24, ui.GREY)
+        ui.rrect(f, 16, 120, 208, 80, 16, ui.CARD)
+        ui.aa_center(f, '未接传感器', 150, 18, ui.SUB)
+        ui.page_dots(f, no, PAGES, ui.SKY['home'][2])
         return
-    ui.aa_center(f, '{}°'.format(home['temp']), 45, 64, ui.GREEN)
-    ui.aa_center(f, '{}%'.format(home['humi']), 158, 64, ui.CYAN)
-    f.rect(20, 265, 200, 14, ui.GREY)                       # 湿度条
-    f.fill_rect(20, 265, min(200, int(2 * home['humi'])), 14, ui.CYAN)
+    rh = round(home['humi'])                      # 室内湿度取整显示(AHT20 给的是 1 位小数)
+    word, wc = comfort(rh)
+    ui.aa_right(f, word, 220, 16, 18, wc)
+    ui.rrect(f, 16, 48, 208, 116, 16, ui.CARD)
+    ui.aa_text(f, '温度', 32, 62, 16, ui.SUB)
+    x = ui.aa_text(f, '{:.1f}'.format(home['temp']), 30, 92, 56, ui.INK)
+    ui.aa_text(f, '°C', x + 4, 98, 18, ui.SUB)
+    ui.rrect(f, 16, 176, 208, 116, 16, ui.CARD)
+    ui.aa_text(f, '湿度', 32, 190, 16, ui.SUB)
+    x = ui.aa_text(f, str(rh), 30, 214, 56, ui.INK)
+    ui.aa_text(f, '%', x + 4, 220, 18, ui.SUB)
+    ui.rrect(f, 32, 270, 176, 10, 5, ui.TRACK)
+    w = 176 * min(100, max(0, rh)) // 100
+    if w >= 10:
+        ui.rrect(f, 32, 270, w, 10, 5, ui.TEAL)
+    ui.page_dots(f, no, PAGES, ui.SKY['home'][2])
 
 def render(page):
     if not tft:
